@@ -4,6 +4,7 @@ export {
   FourTradingConfig,
   BuyParams,
   SellParams,
+  SellMode,
   CreateTokenParams,
   GasOptions,
   TokenCreateListener,

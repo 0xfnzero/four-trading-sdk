@@ -31,6 +31,11 @@ export interface GasOptions {
   maxPriorityFeePerGas?: bigint;  // In wei, use ethers.parseUnits(amount, 'gwei') for gwei
 }
 
+export enum SellMode {
+  FULL = 'full',    // Sell all tokens
+  PARTIAL = 'partial' // Sell partial tokens
+}
+
 export interface BuyParams {
   tokenAddress: string;
   fundsInBNB: bigint;  // In wei, use ethers.parseEther(amount) to convert from BNB
@@ -43,6 +48,7 @@ export interface SellParams {
   tokenAddress: string;
   amount: bigint;  // In wei, use ethers.parseUnits(amount, 18) to convert
   minFunds?: bigint;  // In wei, use ethers.parseEther(amount) to convert from BNB
+  mode?: SellMode; // Sell mode: full or partial (default: FULL)
   origin?: number; // Origin identifier (default: 0)
   feeRate?: bigint; // Custom fee rate (optional)
   feeRecipient?: string; // Custom fee recipient (optional)
@@ -230,11 +236,22 @@ export class FourTrading {
    */
   async sellToken(params: SellParams): Promise<TransactionResult> {
     try {
-      const amount = params.amount;
+      let amount = params.amount;
       const minFunds = params.minFunds || 0n;
+      const mode = params.mode || SellMode.FULL;
+
+      // For partial sell, amount must be divisible by 10^18
+      if (mode === SellMode.PARTIAL) {
+        const divisor = 10n ** 18n;
+        if (amount % divisor !== 0n) {
+          // Round down to nearest divisible value
+          amount = (amount / divisor) * divisor;
+          console.log(`Amount rounded down to ${ethers.formatUnits(amount, 18)} for partial sell`);
+        }
+      }
 
       console.log(`Selling token ${params.tokenAddress}`);
-      console.log(`Amount: ${ethers.formatUnits(params.amount, 18)}`);
+      console.log(`Amount: ${ethers.formatUnits(amount, 18)}`);
       console.log(`Min funds: ${ethers.formatEther(minFunds)} BNB`);
 
       const txOptions = this.buildTxOptions(params.gas);
