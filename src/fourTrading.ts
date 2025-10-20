@@ -49,6 +49,7 @@ export interface SellParams {
   amount: bigint;  // In wei, use ethers.parseUnits(amount, 18) to convert
   minFunds?: bigint;  // In wei, use ethers.parseEther(amount) to convert from BNB
   mode?: SellMode; // Sell mode: full or partial (default: FULL)
+  decimals?: number; // Token decimals (default: 18)
   origin?: number; // Origin identifier (default: 0)
   feeRate?: bigint; // Custom fee rate (optional)
   feeRecipient?: string; // Custom fee recipient (optional)
@@ -155,9 +156,9 @@ export class FourTrading {
       const fundsWei = params.fundsInBNB;
       const minAmount = params.minAmount || 0n;
 
-      console.log(`Buying token ${params.tokenAddress}`);
-      console.log(`Spending: ${ethers.formatEther(params.fundsInBNB)} BNB`);
-      console.log(`Min tokens: ${ethers.formatUnits(minAmount, 18)}`);
+      // console.log(`Buying token ${params.tokenAddress}`);
+      // console.log(`Spending: ${ethers.formatEther(params.fundsInBNB)} BNB`);
+      // console.log(`Min tokens: ${ethers.formatUnits(minAmount, 18)}`);
 
       const txOptions = this.buildTxOptions(params.gas, fundsWei);
       const recipient = params.to || this.wallet.address;
@@ -171,9 +172,9 @@ export class FourTrading {
         txOptions
       );
 
-      console.log(`Transaction sent: ${tx.hash}`);
+      // console.log(`Transaction sent: ${tx.hash}`);
       const receipt = await tx.wait();
-      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      // console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
 
       return {
         success: true,
@@ -239,20 +240,25 @@ export class FourTrading {
       let amount = params.amount;
       const minFunds = params.minFunds || 0n;
       const mode = params.mode || SellMode.FULL;
+      const decimals = params.decimals || 18;
 
       // For partial sell, amount must be divisible by 10^18
       if (mode === SellMode.PARTIAL) {
-        const divisor = 10n ** 18n;
+        const divisor = 10n ** BigInt(decimals);
         if (amount % divisor !== 0n) {
           // Round down to nearest divisible value
           amount = (amount / divisor) * divisor;
-          console.log(`Amount rounded down to ${ethers.formatUnits(amount, 18)} for partial sell`);
+          // console.log(`Amount rounded down to ${ethers.formatUnits(amount, decimals)} for partial sell`);
         }
       }
 
-      console.log(`Selling token ${params.tokenAddress}`);
-      console.log(`Amount: ${ethers.formatUnits(amount, 18)}`);
-      console.log(`Min funds: ${ethers.formatEther(minFunds)} BNB`);
+      if(amount === 0n){
+        throw new Error('Amount must be greater than 0');
+      }
+
+      // console.log(`Selling token ${params.tokenAddress}`);
+      // console.log(`Amount: ${ethers.formatUnits(amount, decimals)}`);
+      // console.log(`Min funds: ${ethers.formatEther(minFunds)} BNB`);
 
       const txOptions = this.buildTxOptions(params.gas);
 
@@ -265,9 +271,9 @@ export class FourTrading {
         txOptions
       );
 
-      console.log(`Transaction sent: ${tx.hash}`);
+      // console.log(`Transaction sent: ${tx.hash}`);
       const receipt = await tx.wait();
-      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      // console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
 
       return {
         success: true,
