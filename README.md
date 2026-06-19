@@ -42,6 +42,17 @@
 
 ---
 
+### What This SDK Provides
+
+FOUR Trading SDK is a TypeScript toolkit for integrating FOUR.meme token trading on BNB Smart Chain. It covers token creation, buy/sell flows, price quotes, slippage checks, event subscriptions, WebSocket reconnection, caching, and production-facing validation utilities.
+
+| Area | Coverage |
+|------|----------|
+| Trading | Create tokens, buy tokens, sell tokens, approve tokens, quote buy/sell prices |
+| Event monitoring | Token creation, purchase, and sale events through BSC WebSocket RPC |
+| Runtime | TypeScript, ethers, bigint-safe APIs, HTTP RPC for transactions, WebSocket RPC for events |
+| Use cases | FOUR.meme trading bots, launch monitors, dashboards, BSC DeFi tools, event analytics |
+
 ### ✨ Features
 
 #### Core Trading

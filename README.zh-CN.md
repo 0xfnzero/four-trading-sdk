@@ -44,6 +44,17 @@
 
 ## 📖 中文文档
 
+### 这个 SDK 提供什么
+
+FOUR Trading SDK 是面向 BNB Smart Chain 的 TypeScript 工具包，用于集成 FOUR.meme 代币交易。它覆盖代币创建、买入/卖出流程、价格报价、滑点检查、事件订阅、WebSocket 重连、缓存和生产环境参数校验工具。
+
+| 范围 | 覆盖内容 |
+|------|----------|
+| 交易功能 | 创建代币、买入代币、卖出代币、授权代币、买卖价格报价 |
+| 事件监控 | 通过 BSC WebSocket RPC 订阅代币创建、购买和出售事件 |
+| 运行环境 | TypeScript、ethers、bigint 安全 API、HTTP RPC 交易、WebSocket RPC 事件 |
+| 使用场景 | FOUR.meme 交易 Bot、发射监控、数据看板、BSC DeFi 工具、事件分析 |
+
 ### ✨ 特性
 
 #### 核心交易功能
