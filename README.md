@@ -44,7 +44,7 @@
 
 ## BSC SDK Family
 
-| Category | Node.js / TypeScript | Go |
+| Category | Primary repository | Alternative or companion |
 | --- | --- | --- |
 | Unified trading | [bsc-trade-sdk-nodejs](https://github.com/0xfnzero/bsc-trade-sdk-nodejs) | [bsc-trade-sdk-golang](https://github.com/0xfnzero/bsc-trade-sdk-golang) |
 | Transaction parsing | [bsc-parser-sdk-nodejs](https://github.com/0xfnzero/bsc-parser-sdk-nodejs) | [bsc-parser-sdk-golang](https://github.com/0xfnzero/bsc-parser-sdk-golang) |

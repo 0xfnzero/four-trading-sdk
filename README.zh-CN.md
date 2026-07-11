@@ -44,7 +44,7 @@
 
 ## BSC SDK 家族
 
-| 类别 | Node.js / TypeScript | Go |
+| 类别 | 主要仓库 | 替代或配套仓库 |
 | --- | --- | --- |
 | 统一交易 | [bsc-trade-sdk-nodejs](https://github.com/0xfnzero/bsc-trade-sdk-nodejs) | [bsc-trade-sdk-golang](https://github.com/0xfnzero/bsc-trade-sdk-golang) |
 | 交易解析 | [bsc-parser-sdk-nodejs](https://github.com/0xfnzero/bsc-parser-sdk-nodejs) | [bsc-parser-sdk-golang](https://github.com/0xfnzero/bsc-parser-sdk-golang) |

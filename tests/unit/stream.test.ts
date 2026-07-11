@@ -163,6 +163,27 @@ describe('stream infrastructure', () => {
     expect(manager.getStats().sources[0].connected).toBe(false);
   });
 
+  it('shares one connection attempt across concurrent start calls', async () => {
+    const socket = new FakeWebSocket();
+    const factory = jest.fn(() => {
+      setImmediate(() => socket.emit('open'));
+      return socket;
+    });
+    const manager = new TransactionStreamManager({
+      logger,
+      sources: [{
+        type: 'websocket-json-rpc',
+        name: 'single-connect',
+        url: 'wss://example.test/ws',
+        webSocketFactory: factory,
+      }],
+    });
+
+    await Promise.all([manager.start(), manager.start()]);
+    expect(factory).toHaveBeenCalledTimes(1);
+    await manager.stop();
+  });
+
   it('accepts provider-specific gRPC streams through a stream factory', async () => {
     const stream = new FakeGrpcStream();
     const manager = new TransactionStreamManager({

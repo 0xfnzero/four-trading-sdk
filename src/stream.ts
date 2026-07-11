@@ -424,6 +424,7 @@ export class TransactionStreamManager {
   private disconnectedCallbacks: Array<(source: string) => void> = [];
   private flushTimer: NodeJS.Timeout | null = null;
   private running = false;
+  private startPromise: Promise<void> | null = null;
   private sequence = 0;
 
   constructor(config: TransactionStreamManagerConfig = {}) {
@@ -468,12 +469,32 @@ export class TransactionStreamManager {
   }
 
   async start(): Promise<void> {
+    if (this.startPromise) {
+      return this.startPromise;
+    }
+    if (this.running) {
+      return;
+    }
+
     this.running = true;
     this.startFlushTimer();
 
+    const operation = this.startSources();
+    this.startPromise = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.startPromise === operation) {
+        this.startPromise = null;
+      }
+    }
+  }
+
+  private async startSources(): Promise<void> {
     const results = await Promise.allSettled([...this.sources.values()].map((state) => this.startSource(state)));
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failures.length === results.length && failures.length > 0) {
+      await this.stop();
       throw failures[0].reason;
     }
   }
