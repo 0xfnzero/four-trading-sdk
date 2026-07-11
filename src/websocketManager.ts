@@ -6,6 +6,7 @@
 import { WebSocketProvider } from 'ethers';
 import { Logger } from './logger';
 import { ConnectionError } from './errors';
+import { Validator } from './validator';
 import {
   WS_RECONNECT_INITIAL_DELAY,
   WS_RECONNECT_MAX_DELAY,
@@ -36,6 +37,7 @@ export class WebSocketManager {
   private reconnectDelay = WS_RECONNECT_INITIAL_DELAY;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isDestroyed = false;
+  private connectingPromise: Promise<WebSocketProvider> | null = null;
 
   // Heartbeat state
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -60,9 +62,24 @@ export class WebSocketManager {
       return this.provider;
     }
 
-    try {
-      this.logger.info('Connecting to WebSocket', { url: this.url });
+    if (this.connectingPromise) {
+      return this.connectingPromise;
+    }
 
+    this.connectingPromise = this.doConnect();
+
+    try {
+      return await this.connectingPromise;
+    } finally {
+      this.connectingPromise = null;
+    }
+  }
+
+  private async doConnect(): Promise<WebSocketProvider> {
+    try {
+      Validator.validateRpcUrl(this.url, 'websocket');
+      this.isDestroyed = false;
+      this.logger.info('Connecting to WebSocket', { url: this.url });
       this.provider = new WebSocketProvider(this.url);
 
       // Setup event listeners
@@ -92,19 +109,39 @@ export class WebSocketManager {
 
     const ws = this.provider.websocket as any;
 
-    ws.on('close', () => {
+    const onClose = () => {
       this.logger.warn('WebSocket connection closed');
       this.handleDisconnection();
-    });
+    };
 
-    ws.on('error', (error: Error) => {
+    const onError = (error: Error) => {
       this.logger.error('WebSocket error', { error: error.message });
       this.notifyError(error);
-    });
+    };
 
-    ws.on('pong', () => {
+    const onPong = () => {
       this.lastPongTime = Date.now();
-    });
+    };
+
+    const providerAny = this.provider as any;
+    const eventTarget = typeof ws.on === 'function'
+      ? ws
+      : typeof providerAny.on === 'function'
+        ? providerAny
+        : null;
+
+    if (eventTarget) {
+      eventTarget.on('close', onClose);
+      eventTarget.on('error', onError);
+      eventTarget.on('pong', onPong);
+      return;
+    }
+
+    if (typeof ws.addEventListener === 'function') {
+      ws.addEventListener('close', onClose);
+      ws.addEventListener('error', (event: any) => onError(event?.error || new Error('WebSocket error')));
+      ws.addEventListener('pong', onPong);
+    }
   }
 
   private handleDisconnection(): void {
@@ -155,7 +192,11 @@ export class WebSocketManager {
       const ws = this.provider.websocket as any;
 
       // Send ping
-      ws.ping();
+      if (typeof ws.ping === 'function') {
+        ws.ping();
+      } else {
+        this.lastPongTime = Date.now();
+      }
 
       // Set timeout for pong response
       this.heartbeatTimeoutTimer = setTimeout(() => {
@@ -163,7 +204,12 @@ export class WebSocketManager {
 
         if (timeSinceLastPong > WS_HEARTBEAT_TIMEOUT * 2) {
           this.logger.warn('WebSocket heartbeat timeout, connection may be dead');
-          (this.provider?.websocket as any)?.terminate();
+          const socket = this.provider?.websocket as any;
+          if (typeof socket?.terminate === 'function') {
+            socket.terminate();
+          } else if (typeof socket?.close === 'function') {
+            socket.close();
+          }
         }
       }, WS_HEARTBEAT_TIMEOUT);
     }, WS_HEARTBEAT_INTERVAL);

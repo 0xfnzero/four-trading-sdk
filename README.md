@@ -42,6 +42,14 @@
 
 ---
 
+## BSC SDK Family
+
+| Category | Node.js / TypeScript | Go |
+| --- | --- | --- |
+| Unified trading | [bsc-trade-sdk-nodejs](https://github.com/0xfnzero/bsc-trade-sdk-nodejs) | [bsc-trade-sdk-golang](https://github.com/0xfnzero/bsc-trade-sdk-golang) |
+| Transaction parsing | [bsc-parser-sdk-nodejs](https://github.com/0xfnzero/bsc-parser-sdk-nodejs) | [bsc-parser-sdk-golang](https://github.com/0xfnzero/bsc-parser-sdk-golang) |
+| Protocol SDKs | **[four-trading-sdk](https://github.com/0xfnzero/four-trading-sdk)** | [pancakeswap-sdk](https://github.com/0xfnzero/pancakeswap-sdk) |
+
 ### What This SDK Provides
 
 FOUR Trading SDK is a TypeScript toolkit for integrating FOUR.meme token trading on BNB Smart Chain. It covers token creation, buy/sell flows, price quotes, slippage checks, event subscriptions, WebSocket reconnection, caching, and production-facing validation utilities.
@@ -65,7 +73,11 @@ FOUR Trading SDK is a TypeScript toolkit for integrating FOUR.meme token trading
 - ⚡ **High Performance**: 60-99% latency reduction with intelligent caching
 - 🗄️ **Smart Caching**: LRU + TTL cache system (99.8% faster on cache hits)
 - 🔄 **Auto-Reconnection**: Exponential backoff WebSocket reconnection
+- 🚀 **Flexible Submission**: Normal RPC, generic JSON-RPC, and private bundle submitters
+- 📡 **Low-Latency Streams**: JSON-RPC WebSocket, provider JSON streams, BlockRazor-style streams, and pluggable gRPC adapters
+- 🔢 **Local Nonce Management**: Safer concurrent transaction signing with pending nonce refresh
 - 📊 **Performance Monitoring**: Track P50/P95/P99 latencies and metrics
+- 🧩 **Calldata Decoding**: ABI-based FOUR Trading transaction selector and argument parsing
 - 🛡️ **Type Safe**: Full TypeScript support with 100% type coverage
 - ✅ **Input Validation**: Comprehensive validation for all parameters
 - 📝 **Structured Logging**: Configurable log levels and formats
@@ -155,7 +167,8 @@ await trading.buyToken({
   tokenAddress: '0xTokenAddress',
   fundsInBNB: bnbAmount,      // Amount of BNB to spend (bigint)
   minAmount: minTokenAmount,   // Minimum tokens to receive (bigint)
-  to: '0xRecipient'            // Optional: recipient address
+  to: '0xRecipient',           // Optional: recipient address
+  origin: 0                    // Optional: current origin-based overload
 });
 
 // Method 2: Buy exact token amount
@@ -166,7 +179,9 @@ await trading.buyTokenExact(
   '0xTokenAddress',
   exactTokens,      // Exact token amount (bigint)
   maxBNB,           // Maximum BNB to spend (bigint)
-  '0xRecipient'     // Optional: recipient address
+  '0xRecipient',    // Optional: recipient address
+  undefined,        // Optional gas config
+  0                 // Optional origin
 );
 ```
 
@@ -200,6 +215,7 @@ const buyQuote = await trading.quoteBuy('0xTokenAddress', bnbAmount);
 console.log(`Tokens: ${buyQuote.tokenAmount}`);
 console.log(`Fee: ${buyQuote.fee}`);
 console.log(`Price per token: ${buyQuote.pricePerToken}`);
+console.log(`Estimated: ${buyQuote.estimated}`);
 
 // Get sell quote
 const tokenAmount = ethers.parseUnits('1000', 18);
@@ -218,6 +234,8 @@ const buyWithSlippage = await trading.calculateBuyWithSlippage(
   1             // 1% slippage (number)
 );
 ```
+
+The current FOUR implementation no longer exposes reliable public `calcBuyAmount`, `calcBuyCost`, and `calcSellCost` helpers for SDK quoting. The SDK therefore computes display quotes locally from a fresh `_tokenInfos` snapshot, `_tradingFeeRate`/`calcTradingFee`, and observed curve state. Buy and sell quotes are marked `estimated: true` and must not be used directly as guaranteed outputs. `calculateBuyWithSlippage` and `calculateSellWithSlippage` additionally simulate the matching contract call and refuse to return a protection value when it would revert; final amounts should still be validated from emitted trade events.
 
 #### Token Information
 
@@ -247,6 +265,7 @@ const purchaseListener = trading.onTokenPurchase((event) => {
   console.log('Token purchased:', event.token);
   console.log('Amount:', event.amount);
   console.log('Cost:', event.cost);
+  console.log('Tx hash:', event.metadata?.txHash);
 }, '0xTokenAddress'); // Optional: filter by token address
 
 // Subscribe to sale events
@@ -277,6 +296,9 @@ const purchaseEvents = await trading.getTokenPurchaseEvents(
 
 // Get sale events
 const saleEvents = await trading.getTokenSaleEvents('0xTokenAddress');
+
+// Historical and live events include optional log metadata
+console.log(createEvents[0]?.metadata?.blockNumber);
 ```
 
 ### 🛠️ Utility Functions
@@ -292,6 +314,8 @@ import {
   normalizeAddress,
   parseTradeEvents,
   getTransactionType,
+  getTransactionSignatureFromData,
+  decodeFourTradingTransactionData,
   calculateGasCost
 } from '@fnzero/four-trading-sdk';
 
@@ -315,6 +339,15 @@ const { purchases, sales } = await parseTradeEvents(receipt, contract);
 
 // Get transaction type
 const txType = getTransactionType(tx); // 'buyTokenAMAP' | 'sellToken' | etc.
+const signature = getTransactionSignatureFromData(tx.data);
+
+// Decode FOUR Trading calldata
+const decoded = decodeFourTradingTransactionData(tx.data, tx.value);
+console.log(decoded?.signature);
+console.log(decoded?.args);
+
+// The selector map includes origin-based buy overloads observed on current BSC transactions,
+// such as buyTokenAMAP(uint256,address,uint256,uint256) -> 0xedf9e251.
 
 // Calculate gas cost
 const gasCost = calculateGasCost(receipt); // "0.001" (BNB)
@@ -382,6 +415,9 @@ import {
   TokenCreateEvent,
   TokenPurchaseEvent,
   TokenSaleEvent,
+  TokenMetadata,
+  MarketCapInfo,
+  SubmitterConfig,
   // Advanced features
   Logger,
   LogLevel,
@@ -423,6 +459,194 @@ const slowOps = perfMonitor.getSlowOperations(10);
 slowOps.forEach(op => {
   console.log(`${op.operationName}: ${op.duration}ms`);
 });
+```
+
+#### Transaction Submission Infrastructure
+
+Configure transaction confirmation policy, local nonce handling, and one or more signed-transaction submitters:
+
+```typescript
+const trading = new FourTrading({
+  rpcUrl: 'https://bsc-dataseed.binance.org',
+  wssUrl: 'wss://bsc-rpc.publicnode.com',
+  privateKey: 'your-private-key',
+  chainId: 56,
+  confirmations: 1,
+  transactionTimeoutMs: 90_000,
+  confirmationPollIntervalMs: 250,
+  waitForConfirmation: true, // Set false for hot-path txHash-only returns
+  requireHotPathReady: false,
+  defaultGas: {
+    gasLimit: 350000n,
+    gasPrice: ethers.parseUnits('3', 'gwei')
+  },
+  useLocalNonce: true,
+  nonce: {
+    initialNonce: 123, // Optional: seed from a preflight getTransactionCount outside the hot path
+    refreshOnEveryNonce: false,
+    autoSyncIntervalMs: 1000
+  },
+  submitters: [
+    { type: 'normal', name: 'public-rpc' },
+    {
+      type: 'forty-eight',
+      name: 'private-48club',
+      url: process.env.FORTY_EIGHT_URL!,
+      targetBlockOffset: 2n,
+      noMerge: true,
+      positionFirst: true
+    },
+    {
+      type: 'bloxroute',
+      name: 'private-bloxroute',
+      url: process.env.BLOXROUTE_URL!,
+      authToken: process.env.BLOXROUTE_AUTH,
+      targetBlockOffset: 2n,
+      bloxrouteBundlePayloadFormat: 'txs',
+      noMerge: true,
+      bloxrouteMevBuilders: { all: '' },
+      bloxrouteBackrunmeRewardAddress: process.env.BLOXROUTE_REWARD_ADDRESS,
+      frontRunningProtection: true
+    },
+    {
+      type: 'bloxroute-private',
+      name: 'private-bloxroute-tx',
+      url: process.env.BLOXROUTE_URL!,
+      authToken: process.env.BLOXROUTE_AUTH,
+      bloxroutePrivateMevBuilders: ['all'],
+      bloxrouteBackrunmeRewardAddress: process.env.BLOXROUTE_REWARD_ADDRESS,
+      frontRunningProtection: true
+    },
+    {
+      type: 'blockrazor',
+      name: 'private-blockrazor',
+      url: process.env.BLOCKRAZOR_URL!,
+      authToken: process.env.BLOCKRAZOR_AUTH,
+      targetBlockOffset: 2n,
+      noMerge: true
+    }
+  ]
+});
+
+const result = await trading.buyToken({
+  tokenAddress: '0xTokenAddress',
+  fundsInBNB: ethers.parseEther('0.1'),
+  minAmount: 0n,
+  targetBlockNumber: 123456789n,
+  bundleRawTransactions: ['0xSignedRawTransaction'] // Optional bundle prefix
+});
+
+console.log(result.submitter);  // First successful submitter
+console.log(result.bundleHash); // Private bundle result, when provided
+console.log(result.nonce);
+
+// Manually resync local nonce after external wallet activity
+await trading.refreshNonce();
+
+// Only after proving a private bundle expired or nothing was broadcast
+await trading.recoverUnbroadcastNonce(result.nonce!);
+```
+
+Supported submitter types are `normal`, `json-rpc`, `forty-eight`, `blockrazor`, `bloxroute`, and `bloxroute-private`. Private endpoints differ by provider; pass provider-specific URLs, auth headers, methods, block limits, and protection flags through `SubmitterConfig`. For `forty-eight`, `FourTrading` automatically signs the bundle as `48spSign` with the SDK private key; direct submitter usage can pass `fortyEightSignerPrivateKey`, or override with a precomputed `fortyEightSignature`. For bloXroute BSC bundle payloads, the SDK emits current snake_case fields such as `max_block_number`, `min_timestamp`, `max_timestamp`, `reverting_tx_hashes`, `no_merge`, `mev_builders`, and `backrunme_reward_address`; `bloxroute-private` uses `bsc_private_tx` and treats the provider response as a transaction hash, not a bundle hash.
+
+For ultra-low-latency flows, set `waitForConfirmation: false`, seed `nonce.initialNonce` from a preflight query, pass explicit gas and `chainId`, and pass `targetBlockNumber` per transaction. A nonce is intentionally rejected inside `defaultGas` because it would be reused by every transaction. With local nonce management enabled, per-call `gas.nonce` is also rejected; set `useLocalNonce: false` when an external system owns every nonce. When `requireHotPathReady: true`, the SDK throws if a transaction would need `populateTransaction` to fetch nonce, gas, or chain data. A private relay acceptance is not proof of inclusion: call `recoverUnbroadcastNonce` only after proving that all paths failed or the target bundle can no longer land. `targetBlockOffset` remains available for convenience, but it reads the current block and is not a hot-path option.
+
+#### Low-Latency Stream Infrastructure
+
+Use `TransactionStreamManager` when you want ShredStream/Geyser-style third-party feeds, BSC pending transaction feeds, or provider-specific log streams without embedding trading logic in the SDK:
+
+```typescript
+import {
+  TransactionStreamManager,
+  TOKEN_CREATE_TOPIC,
+  createBlockRazorGrpcStreamSource,
+  createShredStreamSource
+} from '@fnzero/four-trading-sdk';
+
+const streams = new TransactionStreamManager({
+  orderMode: 'microbatch',
+  microBatchMs: 2,
+  sources: [
+    {
+      type: 'websocket-json-rpc',
+      name: 'pending-rpc',
+      url: process.env.BSC_WSS_URL!,
+      jsonRpcSubscription: 'newPendingTransactions',
+      includePendingTransactionBody: true
+    },
+    {
+      type: 'blockrazor',
+      name: 'blockrazor-logs',
+      url: process.env.BLOCKRAZOR_STREAM_URL!,
+      authToken: process.env.BLOCKRAZOR_AUTH!,
+      addresses: ['0xFourTradingContract'],
+      topics: [[TOKEN_CREATE_TOPIC]]
+    },
+    createBlockRazorGrpcStreamSource({
+      streamFactory: async () => providerSpecificClient.subscribe(),
+      nodeValidation: false
+    }),
+    createShredStreamSource({
+      adapterFactory: ({ emitEvent, signal }) => {
+        thirdPartyFeed.on('transaction', (tx) => emitEvent({
+          eventType: 'transaction',
+          raw: tx,
+          txHash: tx.hash,
+          slot: tx.slot,
+          txIndex: tx.index
+        }));
+        signal.addEventListener('abort', () => thirdPartyFeed.close());
+        return { close: () => thirdPartyFeed.close() };
+      }
+    })
+  ]
+});
+
+streams.onEvent((event) => {
+  if (event.eventType === 'transaction') {
+    console.log(event.txHash, event.signedTransaction);
+  }
+  if (event.eventType === 'log') {
+    console.log(event.blockNumber, event.address, event.topics);
+  }
+});
+
+await streams.start();
+```
+
+Supported source types are `websocket-json-rpc`, `json-websocket`, `http-json-stream`, `blockrazor`, `grpc`, and `adapter`. The `grpc` source is intentionally provider-neutral: pass the generated client/stream from the provider's proto package through `streamFactory`, and optionally use `grpcSubscribeRequest` or `grpcPingRequest` for provider-specific subscribe and ping/pong messages. For ShredStream/Geyser-style feeds or vendor SDK callbacks, use `createShredStreamSource` or `createAdapterStreamSource` to push raw messages or normalized events into the same stream manager.
+
+Ordering modes are `none`, `ordered`, `streaming`, and `microbatch`. They are useful for feeds that may deliver transactions/logs out of order by block/slot and transaction index.
+
+#### Allowance Guard
+
+Skip unnecessary approvals before selling:
+
+```typescript
+const amount = ethers.parseUnits('1000', 18);
+const approvalTx = await trading.ensureTokenApproval('0xTokenAddress', amount);
+
+if (approvalTx) {
+  console.log(`Approved in ${approvalTx.txHash}`);
+}
+
+await trading.sellToken({
+  tokenAddress: '0xTokenAddress',
+  amount,
+  minFunds: 0n
+});
+```
+
+#### Token Metadata and Market Cap
+
+```typescript
+const metadata = await trading.getTokenMetadata('0xTokenAddress');
+console.log(metadata.name, metadata.symbol, metadata.decimals);
+
+const marketCap = await trading.getMarketCap('0xTokenAddress');
+console.log(ethers.formatEther(marketCap.fdvWei));
+console.log(ethers.formatUnits(marketCap.circulatingSupply, marketCap.decimals));
+console.log(ethers.formatEther(marketCap.circulatingMarketCapWei));
 ```
 
 #### Custom Logger

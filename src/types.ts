@@ -43,7 +43,21 @@ export interface TokenStatus {
 export interface TransactionResult {
   success: boolean;
   txHash: string;
-  receipt: any;
+  receipt: any | null;
+  submitter?: string;
+  bundleHash?: string;
+  nonce?: number;
+  gasLimit?: bigint;
+  gasPrice?: bigint;
+}
+
+export interface EventMetadata {
+  txHash?: string;
+  blockNumber?: number;
+  blockHash?: string;
+  logIndex?: number;
+  transactionIndex?: number;
+  removed?: boolean;
 }
 
 export interface TokenCreateEvent {
@@ -55,6 +69,7 @@ export interface TokenCreateEvent {
   totalSupply: bigint;
   launchTime: bigint;
   launchFee: bigint;
+  metadata?: EventMetadata;
 }
 
 export interface TokenPurchaseEvent {
@@ -66,6 +81,7 @@ export interface TokenPurchaseEvent {
   fee: bigint;
   offers: bigint;
   funds: bigint;
+  metadata?: EventMetadata;
 }
 
 export interface TokenSaleEvent {
@@ -77,6 +93,7 @@ export interface TokenSaleEvent {
   fee: bigint;
   offers: bigint;
   funds: bigint;
+  metadata?: EventMetadata;
 }
 
 export interface LiquidityAddedEvent {
@@ -84,4 +101,26 @@ export interface LiquidityAddedEvent {
   offers: bigint;
   quote: string;
   funds: bigint;
+  metadata?: EventMetadata;
+}
+
+export interface TokenMetadata {
+  address: string;
+  name?: string;
+  symbol?: string;
+  decimals: number;
+  totalSupply: bigint;
+}
+
+export interface MarketCapInfo {
+  token: string;
+  price: bigint;
+  decimals: number;
+  totalSupply: bigint;
+  /** Remaining inventory still offered by the FOUR curve. */
+  offers: bigint;
+  /** Curve inventory already sold (maxOffers - offers). */
+  circulatingSupply: bigint;
+  fdvWei: bigint;
+  circulatingMarketCapWei: bigint;
 }

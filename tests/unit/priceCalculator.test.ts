@@ -162,7 +162,7 @@ describe('PriceCalculator', () => {
     it('should throw FeeExceedsAmountError when fee >= amount', async () => {
       // Mock a scenario where fee equals or exceeds amount
       const originalCalcFee = mockContract.calcTradingFee.bind(mockContract);
-      mockContract.calcTradingFee = async () => 2000000000000000000n; // 2 BNB fee
+      mockContract.calcTradingFee = async () => 6000000000000000000n; // Exceeds local proceeds
 
       await expect(
         calculator.quoteBuy(testTokenAddress, 1000000000000000000n) // 1 BNB
@@ -179,15 +179,44 @@ describe('PriceCalculator', () => {
       expect(quote.tokenAmount).toBeGreaterThan(0n);
     });
 
-    it('should use cache for repeated queries', async () => {
+    it('should bypass cached dynamic token state for repeated quotes', async () => {
       const spy = jest.spyOn(mockContract, '_tokenInfos');
 
       await calculator.quoteBuy(testTokenAddress, 1000000000000000000n);
       await calculator.quoteBuy(testTokenAddress, 2000000000000000000n);
 
-      expect(spy).toHaveBeenCalledTimes(1); // Token info cached
+      expect(spy).toHaveBeenCalledTimes(2);
 
       spy.mockRestore();
+    });
+
+    it('should not call stale on-chain calcBuyAmount helper', async () => {
+      const spy = jest.spyOn(mockContract, 'calcBuyAmount');
+
+      await calculator.quoteBuy(testTokenAddress, 1000000000000000000n);
+
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('should cap the estimate at offers because offers is remaining inventory', () => {
+      const amount = PriceCalculator.estimateBuyAmountFromTokenInfo({
+        base: ethers.ZeroAddress,
+        quote: ethers.ZeroAddress,
+        template: 0n,
+        totalSupply: 1_000n,
+        maxOffers: 800n,
+        maxRaising: 100n,
+        launchTime: 0n,
+        offers: 745n,
+        funds: 10n,
+        lastPrice: 1n,
+        K: 0n,
+        T: 0n,
+        status: 1n,
+      }, 1_000n);
+
+      expect(amount).toBe(745n);
     });
   });
 
@@ -216,7 +245,7 @@ describe('PriceCalculator', () => {
 
     it('should throw FeeExceedsAmountError when fee >= proceeds', async () => {
       const originalCalcFee = mockContract.calcTradingFee.bind(mockContract);
-      mockContract.calcTradingFee = async () => 2000000000000000000n; // 2 BNB fee
+      mockContract.calcTradingFee = async () => 6000000000000000000n; // Exceeds local proceeds
 
       await expect(
         calculator.quoteSell(testTokenAddress, 1000000000000000000n)
@@ -232,14 +261,47 @@ describe('PriceCalculator', () => {
       expect(quote.tokenAmount).toBe(largeAmount);
       expect(quote.bnbCost).toBeGreaterThan(0n);
     });
+
+    it('should return zero quote when sell amount rounds down to zero proceeds', async () => {
+      const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
+      calculator.clearCache();
+      mockContract.setTokenInfo(testTokenAddress, {
+        ...tokenInfo,
+        offers: 1000000000000000000000000000n,
+        funds: 1n,
+      });
+
+      const quote = await calculator.quoteSell(testTokenAddress, 1n);
+
+      expect(quote.bnbCost).toBe(0n);
+      expect(quote.fee).toBe(0n);
+      expect(quote.pricePerToken).toBe(0n);
+    });
+
+    it('should not call stale on-chain calcSellCost helper', async () => {
+      const spy = jest.spyOn(mockContract, 'calcSellCost');
+
+      await calculator.quoteSell(testTokenAddress, 1000000000000000000n);
+
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('should refuse to present the observed sell formula as an exact result', async () => {
+      const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
+      expect(() => PriceCalculator.calcSellCostFromTokenInfo(tokenInfo, 1n)).toThrow(
+        'Exact FOUR sell cost is unavailable'
+      );
+      expect(PriceCalculator.estimateSellCostFromTokenInfo(tokenInfo, 1n)).toBeGreaterThanOrEqual(0n);
+    });
   });
 
-  describe('calcBuyCost', () => {
-    it('should calculate buy cost for exact token amount', async () => {
+  describe('estimateBuyCost', () => {
+    it('should estimate buy cost at the current marginal price', async () => {
       const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
       const tokenAmount = 1000000000000000000n;
 
-      const quote = await calculator.calcBuyCost(tokenInfo, tokenAmount);
+      const quote = await calculator.estimateBuyCost(tokenInfo, tokenAmount);
 
       expect(quote.tokenAmount).toBe(tokenAmount);
       expect(quote.bnbCost).toBeGreaterThan(0n);
@@ -251,7 +313,7 @@ describe('PriceCalculator', () => {
       const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
 
       await expect(
-        calculator.calcBuyCost(tokenInfo, 0n)
+        calculator.estimateBuyCost(tokenInfo, 0n)
       ).rejects.toThrow();
     });
 
@@ -259,10 +321,34 @@ describe('PriceCalculator', () => {
       const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
       const tokenAmount = 1000000000000000000n;
 
-      const quote = await calculator.calcBuyCost(tokenInfo, tokenAmount);
+      const quote = await calculator.estimateBuyCost(tokenInfo, tokenAmount);
 
       // Total cost should be base cost + fee
       expect(quote.bnbCost).toBeGreaterThan(quote.fee);
+    });
+
+    it('should not call stale on-chain calcBuyCost helper', async () => {
+      const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
+      const spy = jest.spyOn(mockContract, 'calcBuyCost');
+
+      await calculator.estimateBuyCost(tokenInfo, 1000000000000000000n);
+
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('should refuse to present the marginal estimate as an exact buy cost', async () => {
+      const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
+
+      await expect(
+        calculator.calcBuyCost(tokenInfo, 1000000000000000000n)
+      ).rejects.toThrow('Exact FOUR buy cost is unavailable');
+      expect(() => PriceCalculator.calcBuyCostFromTokenInfo(tokenInfo, 1n)).toThrow(
+        'Exact FOUR buy cost is unavailable'
+      );
+      expect(() => PriceCalculator.calcBuyAmountFromTokenInfo(tokenInfo, 1n)).toThrow(
+        'Exact FOUR buy amount is unavailable'
+      );
     });
   });
 
@@ -279,60 +365,32 @@ describe('PriceCalculator', () => {
       ).rejects.toThrow();
     });
 
-    it('should use cached token info', async () => {
+    it('should bypass cached dynamic token info', async () => {
       const spy = jest.spyOn(mockContract, '_tokenInfos');
 
       await calculator.getCurrentPrice(testTokenAddress);
       await calculator.getCurrentPrice(testTokenAddress);
 
-      expect(spy).toHaveBeenCalledTimes(1); // Cached
+      expect(spy).toHaveBeenCalledTimes(2);
 
+      spy.mockRestore();
+    });
+
+    it('should not call stale on-chain calcLastPrice helper', async () => {
+      const spy = jest.spyOn(mockContract, 'calcLastPrice');
+
+      await calculator.getCurrentPrice(testTokenAddress);
+
+      expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
     });
   });
 
   describe('estimateBuySlippage', () => {
-    it('should estimate minimum tokens with slippage', async () => {
-      const bnbAmount = 1000000000000000000n;
-      const slippage = 1; // 1%
-
-      const minTokens = await calculator.estimateBuySlippage(
-        testTokenAddress,
-        bnbAmount,
-        slippage
-      );
-
-      expect(minTokens).toBeGreaterThan(0n);
-
-      // Should be approximately 99% of quote amount
-      const quote = await calculator.quoteBuy(testTokenAddress, bnbAmount);
-      const expected = (quote.tokenAmount * 9900n) / 10000n;
-      expect(minTokens).toBe(expected);
-    });
-
-    it('should handle 0% slippage', async () => {
-      const bnbAmount = 1000000000000000000n;
-
-      const minTokens = await calculator.estimateBuySlippage(
-        testTokenAddress,
-        bnbAmount,
-        0
-      );
-
-      const quote = await calculator.quoteBuy(testTokenAddress, bnbAmount);
-      expect(minTokens).toBe(quote.tokenAmount);
-    });
-
-    it('should handle 100% slippage', async () => {
-      const bnbAmount = 1000000000000000000n;
-
-      const minTokens = await calculator.estimateBuySlippage(
-        testTokenAddress,
-        bnbAmount,
-        100
-      );
-
-      expect(minTokens).toBe(0n);
+    it('should refuse to return an unverified executable minAmount', async () => {
+      await expect(
+        calculator.estimateBuySlippage(testTokenAddress, 1000000000000000000n, 1)
+      ).rejects.toThrow('requires on-chain simulation');
     });
 
     it('should reject invalid slippage percentage', async () => {
@@ -359,47 +417,10 @@ describe('PriceCalculator', () => {
   });
 
   describe('estimateSellSlippage', () => {
-    it('should estimate minimum BNB with slippage', async () => {
-      const tokenAmount = 1000000000000000000n;
-      const slippage = 1; // 1%
-
-      const minBnb = await calculator.estimateSellSlippage(
-        testTokenAddress,
-        tokenAmount,
-        slippage
-      );
-
-      expect(minBnb).toBeGreaterThan(0n);
-
-      // Should be approximately 99% of quote amount
-      const quote = await calculator.quoteSell(testTokenAddress, tokenAmount);
-      const expected = (quote.bnbCost * 9900n) / 10000n;
-      expect(minBnb).toBe(expected);
-    });
-
-    it('should handle 0% slippage', async () => {
-      const tokenAmount = 1000000000000000000n;
-
-      const minBnb = await calculator.estimateSellSlippage(
-        testTokenAddress,
-        tokenAmount,
-        0
-      );
-
-      const quote = await calculator.quoteSell(testTokenAddress, tokenAmount);
-      expect(minBnb).toBe(quote.bnbCost);
-    });
-
-    it('should handle 100% slippage', async () => {
-      const tokenAmount = 1000000000000000000n;
-
-      const minBnb = await calculator.estimateSellSlippage(
-        testTokenAddress,
-        tokenAmount,
-        100
-      );
-
-      expect(minBnb).toBe(0n);
+    it('should refuse to return an unverified executable minFunds', async () => {
+      await expect(
+        calculator.estimateSellSlippage(testTokenAddress, 1000000000000000000n, 1)
+      ).rejects.toThrow('requires on-chain simulation');
     });
 
     it('should reject invalid slippage percentage', async () => {
@@ -463,16 +484,17 @@ describe('PriceCalculator', () => {
     });
 
     it('should handle zero token amount result', async () => {
-      // Mock scenario where calcBuyAmount returns 0
-      const originalCalcBuy = mockContract.calcBuyAmount.bind(mockContract);
-      mockContract.calcBuyAmount = async () => 0n;
+      const tokenInfo = await calculator.getTokenInfo(testTokenAddress);
+      calculator.clearCache();
+      mockContract.setTokenInfo(testTokenAddress, {
+        ...tokenInfo,
+        lastPrice: 0n,
+      });
 
       const quote = await calculator.quoteBuy(testTokenAddress, 1000000000000000000n);
 
       expect(quote.tokenAmount).toBe(0n);
       expect(quote.pricePerToken).toBe(0n); // Avoid division by zero
-
-      mockContract.calcBuyAmount = originalCalcBuy;
     });
 
     it('should handle concurrent requests', async () => {

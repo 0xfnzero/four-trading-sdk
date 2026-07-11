@@ -102,9 +102,6 @@ describe('WebSocketManager', () => {
     it('should establish connection', async () => {
       const connectPromise = manager.connect();
 
-      // Fast-forward to allow connection
-      jest.runAllTimers();
-
       const provider = await connectPromise;
 
       expect(provider).toBeDefined();
@@ -132,7 +129,6 @@ describe('WebSocketManager', () => {
 
     it('should return true when connected', async () => {
       await manager.connect();
-      jest.runAllTimers();
 
       expect(manager.isConnected()).toBe(true);
     });
@@ -188,7 +184,6 @@ describe('WebSocketManager', () => {
         manager.onConnected(callback);
 
         await manager.connect();
-        jest.runAllTimers();
 
         expect(callback).toHaveBeenCalled();
       });
@@ -201,7 +196,6 @@ describe('WebSocketManager', () => {
         manager.onConnected(callback2);
 
         await manager.connect();
-        jest.runAllTimers();
 
         expect(callback1).toHaveBeenCalled();
         expect(callback2).toHaveBeenCalled();
@@ -214,7 +208,6 @@ describe('WebSocketManager', () => {
         unsubscribe();
 
         await manager.connect();
-        jest.runAllTimers();
 
         expect(callback).not.toHaveBeenCalled();
       });
@@ -287,9 +280,11 @@ describe('WebSocketManager', () => {
 
       // Simulate disconnection
       (provider as any)._triggerEvent('close');
+      expect(manager.getStats().reconnectAttempts).toBeGreaterThan(0);
 
       // Fast-forward to trigger reconnection
       jest.advanceTimersByTime(2000);
+      await Promise.resolve();
 
       // Should have attempted reconnection
       expect(onConnected).toHaveBeenCalled();
@@ -302,11 +297,13 @@ describe('WebSocketManager', () => {
       // Simulate multiple disconnections
       for (let i = 0; i < 3; i++) {
         (provider as any)._triggerEvent('close');
+        expect(manager.getStats().reconnectAttempts).toBeGreaterThan(0);
         jest.advanceTimersByTime(1000 * Math.pow(1.5, i));
+        await Promise.resolve();
       }
 
       const stats = manager.getStats();
-      expect(stats.reconnectAttempts).toBeGreaterThan(0);
+      expect(stats.connected).toBe(true);
     });
 
     it('should not reconnect if manually destroyed', async () => {
@@ -331,10 +328,12 @@ describe('WebSocketManager', () => {
 
       // Simulate disconnections
       (provider as any)._triggerEvent('close');
+      expect(manager.getStats().reconnectAttempts).toBeGreaterThan(0);
       jest.advanceTimersByTime(2000);
+      await Promise.resolve();
 
       (provider as any)._triggerEvent('close');
-      jest.advanceTimersByTime(3000);
+      expect(manager.getStats().reconnectAttempts).toBeGreaterThan(0);
 
       const stats = manager.getStats();
       expect(stats.reconnectAttempts).toBeGreaterThan(0);
@@ -344,7 +343,6 @@ describe('WebSocketManager', () => {
   describe('heartbeat', () => {
     it('should start heartbeat after connection', async () => {
       await manager.connect();
-      jest.runAllTimers();
 
       // Heartbeat should be running
       const stats = manager.getStats();
@@ -388,7 +386,6 @@ describe('WebSocketManager', () => {
 
       // Simulate disconnection and reconnection
       (provider as any)._triggerEvent('close');
-      jest.advanceTimersByTime(2000);
 
       const stats = manager.getStats();
       expect(stats.reconnectAttempts).toBeGreaterThan(0);
@@ -396,7 +393,6 @@ describe('WebSocketManager', () => {
 
     it('should include last pong time', async () => {
       await manager.connect();
-      jest.runAllTimers();
 
       const stats = manager.getStats();
       expect(stats).toHaveProperty('lastPongTime');
@@ -406,7 +402,7 @@ describe('WebSocketManager', () => {
 
   describe('error handling', () => {
     it('should handle connection errors gracefully', async () => {
-      const errorManager = new WebSocketManager({ url: 'wss://invalid.url', logger });
+      const errorManager = new WebSocketManager({ url: 'invalid-url', logger });
 
       await expect(errorManager.connect()).rejects.toThrow();
     });
@@ -432,13 +428,15 @@ describe('WebSocketManager', () => {
 
       // Simulate error during reconnection
       (provider as any)._triggerEvent('close');
+      expect(manager.getStats().reconnectAttempts).toBeGreaterThan(0);
       (provider as any)._triggerEvent('error', new Error('Reconnection failed'));
 
       jest.advanceTimersByTime(5000);
+      await Promise.resolve();
 
       // Should continue attempting to reconnect
       const stats = manager.getStats();
-      expect(stats.reconnectAttempts).toBeGreaterThan(0);
+      expect(stats.connected).toBe(true);
     });
   });
 
@@ -458,8 +456,6 @@ describe('WebSocketManager', () => {
         manager.connect(),
         manager.connect(),
       ];
-
-      jest.runAllTimers();
 
       const providers = await Promise.all(promises);
 

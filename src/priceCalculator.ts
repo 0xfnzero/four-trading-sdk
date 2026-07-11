@@ -15,6 +15,12 @@ export interface PriceInfo {
   bnbCost: bigint;
   pricePerToken: bigint;
   fee: bigint;
+  estimated?: boolean;
+}
+
+export interface TokenInfoQueryOptions {
+  /** Bypass the cache for transaction-sensitive calculations. */
+  fresh?: boolean;
 }
 
 export class PriceCalculator {
@@ -29,13 +35,18 @@ export class PriceCalculator {
   /**
    * Get token information with caching
    */
-  async getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
+  async getTokenInfo(
+    tokenAddress: string,
+    options: TokenInfoQueryOptions = {}
+  ): Promise<TokenInfo> {
     Validator.validateAddress(tokenAddress, 'tokenAddress');
 
-    // Check cache first
-    const cached = this.tokenInfoCache.get(tokenAddress.toLowerCase());
-    if (cached) {
-      return cached;
+    const cacheKey = tokenAddress.toLowerCase();
+    if (!options.fresh) {
+      const cached = this.tokenInfoCache.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
     }
 
     // Fetch from contract
@@ -57,7 +68,7 @@ export class PriceCalculator {
     };
 
     // Cache the result
-    this.tokenInfoCache.set(tokenAddress.toLowerCase(), tokenInfo);
+    this.tokenInfoCache.set(cacheKey, tokenInfo);
 
     return tokenInfo;
   }
@@ -69,8 +80,10 @@ export class PriceCalculator {
     Validator.validateAddress(tokenAddress, 'tokenAddress');
     Validator.validateAmount(bnbAmount, 'bnbAmount');
 
-    const tokenInfo = await this.getTokenInfo(tokenAddress);
-    const fee: bigint = await this.contract.calcTradingFee(tokenInfo, bnbAmount);
+    // offers/funds/lastPrice change on every trade. A cached snapshot must
+    // never be used to derive a transaction protection value.
+    const tokenInfo = await this.getTokenInfo(tokenAddress, { fresh: true });
+    const fee = await this.calcTradingFee(tokenInfo, bnbAmount);
 
     // Validate fee doesn't exceed amount
     if (fee >= bnbAmount) {
@@ -78,10 +91,10 @@ export class PriceCalculator {
     }
 
     const fundsAfterFee: bigint = bnbAmount - fee;
-    const tokenAmount: bigint = await this.contract.calcBuyAmount(tokenInfo, fundsAfterFee);
+    const tokenAmount = PriceCalculator.estimateBuyAmountFromTokenInfo(tokenInfo, fundsAfterFee);
     const pricePerToken: bigint = tokenAmount > 0n ? (bnbAmount * ONE_ETHER) / tokenAmount : 0n;
 
-    return { tokenAmount, bnbCost: bnbAmount, pricePerToken, fee };
+    return { tokenAmount, bnbCost: bnbAmount, pricePerToken, fee, estimated: true };
   }
 
   /**
@@ -91,9 +104,13 @@ export class PriceCalculator {
     Validator.validateAddress(tokenAddress, 'tokenAddress');
     Validator.validateAmount(tokenAmount, 'tokenAmount');
 
-    const tokenInfo = await this.getTokenInfo(tokenAddress);
-    const bnbBeforeFee: bigint = await this.contract.calcSellCost(tokenInfo, tokenAmount);
-    const fee: bigint = await this.contract.calcTradingFee(tokenInfo, bnbBeforeFee);
+    const tokenInfo = await this.getTokenInfo(tokenAddress, { fresh: true });
+    const bnbBeforeFee = PriceCalculator.estimateSellCostFromTokenInfo(tokenInfo, tokenAmount);
+    if (bnbBeforeFee === 0n) {
+      return { tokenAmount, bnbCost: 0n, pricePerToken: 0n, fee: 0n, estimated: true };
+    }
+
+    const fee = await this.calcTradingFee(tokenInfo, bnbBeforeFee);
 
     // Validate fee doesn't exceed proceeds
     if (fee >= bnbBeforeFee) {
@@ -103,21 +120,27 @@ export class PriceCalculator {
     const bnbCost: bigint = bnbBeforeFee - fee;
     const pricePerToken: bigint = tokenAmount > 0n ? (bnbCost * ONE_ETHER) / tokenAmount : 0n;
 
-    return { tokenAmount, bnbCost, pricePerToken, fee };
+    return { tokenAmount, bnbCost, pricePerToken, fee, estimated: true };
   }
 
-  /**
-   * Calculate cost to buy exact token amount
-   */
-  async calcBuyCost(tokenInfo: TokenInfo, tokenAmount: bigint): Promise<PriceInfo> {
+  /** @deprecated The deployed FOUR calcBuyCost helper reverts. */
+  async calcBuyCost(_tokenInfo: TokenInfo, tokenAmount: bigint): Promise<PriceInfo> {
+    Validator.validateAmount(tokenAmount, 'tokenAmount');
+    throw new Error(
+      'Exact FOUR buy cost is unavailable; use estimateBuyCost only for display and simulate before setting maxFunds'
+    );
+  }
+
+  /** Estimate cost at the current marginal price. Not safe as maxFunds. */
+  async estimateBuyCost(tokenInfo: TokenInfo, tokenAmount: bigint): Promise<PriceInfo> {
     Validator.validateAmount(tokenAmount, 'tokenAmount');
 
-    const bnbBeforeFee: bigint = await this.contract.calcBuyCost(tokenInfo, tokenAmount);
-    const fee: bigint = await this.contract.calcTradingFee(tokenInfo, bnbBeforeFee);
+    const bnbBeforeFee = PriceCalculator.estimateBuyCostFromTokenInfo(tokenInfo, tokenAmount);
+    const fee = await this.calcTradingFee(tokenInfo, bnbBeforeFee);
     const bnbCost: bigint = bnbBeforeFee + fee;
     const pricePerToken: bigint = tokenAmount > 0n ? (bnbCost * ONE_ETHER) / tokenAmount : 0n;
 
-    return { tokenAmount, bnbCost, pricePerToken, fee };
+    return { tokenAmount, bnbCost, pricePerToken, fee, estimated: true };
   }
 
   /**
@@ -126,34 +149,121 @@ export class PriceCalculator {
   async getCurrentPrice(tokenAddress: string): Promise<bigint> {
     Validator.validateAddress(tokenAddress, 'tokenAddress');
 
-    const tokenInfo = await this.getTokenInfo(tokenAddress);
-    return await this.contract.calcLastPrice(tokenInfo);
+    const tokenInfo = await this.getTokenInfo(tokenAddress, { fresh: true });
+    return PriceCalculator.calcLastPriceFromTokenInfo(tokenInfo);
+  }
+
+  async calcTradingFee(tokenInfo: TokenInfo, funds: bigint): Promise<bigint> {
+    Validator.validateAmount(funds, 'funds', { allowZero: true });
+
+    if (funds === 0n) {
+      return 0n;
+    }
+
+    try {
+      return await this.contract.calcTradingFee(tokenInfo, funds);
+    } catch {
+      const feeRate = await this.contract._tradingFeeRate();
+      return (funds * BigInt(feeRate)) / 10000n;
+    }
+  }
+
+  /** @deprecated The deployed FOUR calcBuyAmount helper reverts. */
+  static calcBuyAmountFromTokenInfo(_tokenInfo: TokenInfo, funds: bigint): bigint {
+    Validator.validateAmount(funds, 'funds', { allowZero: true });
+    throw new Error(
+      'Exact FOUR buy amount is unavailable; use estimateBuyAmountFromTokenInfo only for display'
+    );
+  }
+
+  /** Estimate output at the current marginal price. Not safe as minAmount. */
+  static estimateBuyAmountFromTokenInfo(tokenInfo: TokenInfo, funds: bigint): bigint {
+    Validator.validateAmount(funds, 'funds', { allowZero: true });
+    if (funds === 0n || tokenInfo.lastPrice === 0n) {
+      return 0n;
+    }
+
+    const amount = (funds * ONE_ETHER) / tokenInfo.lastPrice;
+    // FOUR stores the inventory still offered for sale in `offers`.
+    return amount > tokenInfo.offers
+      ? tokenInfo.offers
+      : amount;
+  }
+
+  /** @deprecated The deployed FOUR calcBuyCost helper reverts. */
+  static calcBuyCostFromTokenInfo(_tokenInfo: TokenInfo, tokenAmount: bigint): bigint {
+    Validator.validateAmount(tokenAmount, 'tokenAmount', { allowZero: true });
+    throw new Error(
+      'Exact FOUR buy cost is unavailable; use estimateBuyCostFromTokenInfo only for display'
+    );
+  }
+
+  /** Estimate cost at the current marginal price. Not safe as maxFunds. */
+  static estimateBuyCostFromTokenInfo(tokenInfo: TokenInfo, tokenAmount: bigint): bigint {
+    Validator.validateAmount(tokenAmount, 'tokenAmount', { allowZero: true });
+    if (tokenAmount === 0n || tokenInfo.lastPrice === 0n) {
+      return 0n;
+    }
+
+    return (tokenAmount * tokenInfo.lastPrice) / ONE_ETHER;
+  }
+
+  /** @deprecated The deployed FOUR calcSellCost helper reverts. */
+  static calcSellCostFromTokenInfo(_tokenInfo: TokenInfo, tokenAmount: bigint): bigint {
+    Validator.validateAmount(tokenAmount, 'tokenAmount', { allowZero: true });
+    throw new Error(
+      'Exact FOUR sell cost is unavailable; use estimateSellCostFromTokenInfo only for display'
+    );
+  }
+
+  /** Estimate proceeds from observed state. Not safe as minFunds. */
+  static estimateSellCostFromTokenInfo(tokenInfo: TokenInfo, tokenAmount: bigint): bigint {
+    Validator.validateAmount(tokenAmount, 'tokenAmount', { allowZero: true });
+    if (tokenAmount === 0n || tokenInfo.funds === 0n) {
+      return 0n;
+    }
+
+    const denominator = tokenInfo.offers + tokenAmount;
+    if (denominator === 0n) {
+      return 0n;
+    }
+
+    return (tokenInfo.funds * tokenAmount) / denominator;
+  }
+
+  static calcLastPriceFromTokenInfo(tokenInfo: TokenInfo): bigint {
+    return tokenInfo.lastPrice;
   }
 
   /**
-   * Estimate minimum tokens with slippage protection
+   * @deprecated A safe minimum requires simulating the actual buy call.
    */
   async estimateBuySlippage(tokenAddress: string, bnbAmount: bigint, slippagePercent: number): Promise<bigint> {
     Validator.validateAddress(tokenAddress, 'tokenAddress');
     Validator.validateAmount(bnbAmount, 'bnbAmount');
     Validator.validateSlippage(slippagePercent);
 
-    const priceInfo = await this.quoteBuy(tokenAddress, bnbAmount);
-    const slippageFactor = BigInt(Math.floor((100 - slippagePercent) * 100));
-    return (priceInfo.tokenAmount * slippageFactor) / SLIPPAGE_DENOMINATOR;
+    throw new Error(
+      'A safe FOUR minAmount requires on-chain simulation; use FourTrading.calculateBuyWithSlippage'
+    );
   }
 
-  /**
-   * Estimate minimum BNB with slippage protection
-   */
+  /** @deprecated A safe minimum requires simulating the actual sell call. */
   async estimateSellSlippage(tokenAddress: string, tokenAmount: bigint, slippagePercent: number): Promise<bigint> {
     Validator.validateAddress(tokenAddress, 'tokenAddress');
     Validator.validateAmount(tokenAmount, 'tokenAmount');
     Validator.validateSlippage(slippagePercent);
 
-    const priceInfo = await this.quoteSell(tokenAddress, tokenAmount);
+    throw new Error(
+      'A safe FOUR minFunds requires on-chain simulation; use FourTrading.calculateSellWithSlippage'
+    );
+  }
+
+  static applySlippage(amount: bigint, slippagePercent: number): bigint {
+    Validator.validateAmount(amount, 'amount', { allowZero: true });
+    Validator.validateSlippage(slippagePercent);
     const slippageFactor = BigInt(Math.floor((100 - slippagePercent) * 100));
-    return (priceInfo.bnbCost * slippageFactor) / SLIPPAGE_DENOMINATOR;
+    return (amount * slippageFactor) / SLIPPAGE_DENOMINATOR;
   }
 
   /**

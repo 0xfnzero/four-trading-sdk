@@ -38,8 +38,15 @@ export const TOKEN_CREATE_TOPIC = '0x396d5e902b675b032348d3d2e9517ee8f0c4a926603
 // Function signatures
 export const ADD_LIQUIDITY_SIGNATURE = '0xe3412e3d';
 export const CREATE_TOKEN_SIGNATURE = '0x519ebb10';
+export const CREATE_TOKEN_ARGS_SIGNATURE = '0x73306244';
+export const BUY_TOKEN_AMAP_WITH_RECIPIENT_SIGNATURE = '0x7f79f6df';
 export const BUY_TOKEN_AMAP_SIGNATURE = '0x87f27655';
-export const SELL_TOKEN_SIGNATURE = '0xe63aaf36';
+export const BUY_TOKEN_EXACT_WITH_RECIPIENT_SIGNATURE = '0x7d17ff3d';
+export const BUY_TOKEN_EXACT_SIGNATURE = '0xe671499b';
+export const SELL_TOKEN_SIGNATURE = '0x3e11741f';
+export const SELL_TOKEN_WITH_ORIGIN_SIGNATURE = '0x0da74935';
+export const SELL_TOKEN_WITH_FEE_SIGNATURE = '0x06e7b98f';
+export const SELL_TOKEN_FROM_WITH_FEE_SIGNATURE = '0xe63aaf36';
 
 // Performance monitoring
 export const PERF_SLOW_QUERY_THRESHOLD = 1000; // 1 second

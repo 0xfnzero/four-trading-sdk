@@ -1,4 +1,5 @@
 import { Validator } from '../../src/validator';
+import { ethers } from 'ethers';
 import {
   InvalidAddressError,
   InvalidAmountError,
@@ -16,7 +17,7 @@ describe('Validator', () => {
     });
 
     it('should accept checksummed address', () => {
-      const checksummedAddress = '0x5C952063c7Fc8610fFdB798152d69F0b9550762B';
+      const checksummedAddress = ethers.getAddress('0x5c952063c7fc8610ffdb798152d69f0b9550762b');
       // Note: ethers.isAddress in v6 is case-sensitive for checksums
       // This test verifies addresses are validated
       expect(() => {
@@ -316,6 +317,20 @@ describe('Validator', () => {
       expect(() => {
         Validator.validateSlippage(NaN);
       }).toThrow(ValidationError);
+    });
+  });
+
+  describe('validateDecimals', () => {
+    it('should accept integer decimal counts in range', () => {
+      expect(() => Validator.validateDecimals(0)).not.toThrow();
+      expect(() => Validator.validateDecimals(18)).not.toThrow();
+      expect(() => Validator.validateDecimals(77)).not.toThrow();
+    });
+
+    it('should reject invalid decimal counts', () => {
+      expect(() => Validator.validateDecimals(-1)).toThrow();
+      expect(() => Validator.validateDecimals(1.5)).toThrow();
+      expect(() => Validator.validateDecimals(78)).toThrow();
     });
   });
 

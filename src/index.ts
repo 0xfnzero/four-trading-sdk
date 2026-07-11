@@ -14,8 +14,11 @@ export {
 } from './fourTrading';
 
 export {
+  EventMetadata,
+  MarketCapInfo,
   TokenInfo,
   TokenInfoEx,
+  TokenMetadata,
   Template,
   TokenStatus,
   TransactionResult,
@@ -27,7 +30,7 @@ export {
 
 export { FOUR_TRADING_ABI } from './abi';
 
-export { PriceCalculator, PriceInfo } from './priceCalculator';
+export { PriceCalculator, PriceInfo, TokenInfoQueryOptions } from './priceCalculator';
 
 // Error classes
 export {
@@ -75,10 +78,74 @@ export {
   normalizeAddress,
   isFourMemeTransaction,
   getTransactionType,
+  getTransactionTypeFromData,
   calculateGasCost,
+  decodeFourTradingTransactionData,
+  getTransactionSelectorMap,
+  getTransactionSignatureFromData,
   waitForTransaction,
   FOUR_MEME_ADDRESS,
   TOKEN_CREATE_TOPIC,
   ADD_LIQUIDITY_SIGNATURE,
   CREATE_TOKEN_SIGNATURE,
 } from './utils';
+
+export type {
+  ParsedTransactionInput,
+} from './utils';
+
+export {
+  NonceManager,
+  NonceManagerConfig,
+} from './nonceManager';
+
+export {
+  NormalSubmitter,
+  JsonRpcSubmitter,
+  MultiSubmitter,
+  createSubmitter,
+  getSignedTransactionHash,
+  signFortyEightSoulPointBundle,
+  SubmitterConfig,
+  SubmitterType,
+  SubmitSignedTransactionParams,
+  SubmitterResult,
+  SubmitterContext,
+  TransactionSubmitter,
+} from './submitter';
+
+export {
+  TransactionStreamManager,
+  OrderedStreamEventBuffer,
+  JsonValueStreamDecoder,
+  buildJsonRpcSubscribeMessage,
+  createAdapterStreamSource,
+  createBlockRazorGrpcStreamSource,
+  createGeyserGrpcStreamSource,
+  createGrpcStreamSource,
+  createShredStreamSource,
+  normalizeStreamMessage,
+  StreamEvent,
+  StreamEventType,
+  StreamSourceConfig,
+  StreamSourceStats,
+  StreamSourceType,
+  StreamOrderMode,
+  StreamParserContext,
+  StreamMessageParser,
+  StreamMessageBuilder,
+  TransactionStreamManagerConfig,
+  TransactionStreamManagerStats,
+  AdapterStreamSourceOptions,
+  BlockRazorGrpcStreamSourceOptions,
+  WebSocketFactory,
+  WebSocketLike,
+  GrpcStreamSourceOptions,
+  GrpcStreamFactory,
+  GrpcStreamFactoryContext,
+  GrpcStreamLike,
+  StreamAdapterEvent,
+  StreamAdapterFactory,
+  StreamAdapterFactoryContext,
+  StreamAdapterHandle,
+} from './stream';

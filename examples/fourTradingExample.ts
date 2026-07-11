@@ -135,14 +135,14 @@ async function main() {
     const bnbForCalc = ethers.parseEther('0.1');
     const tokenForCalc = ethers.parseUnits('1000', 18);
 
-    const buyAmount = await trading.calcBuyAmount(tokenInfo, bnbForCalc);
-    console.log(`For 0.1 BNB, you would get: ${ethers.formatUnits(buyAmount, 18)} tokens`);
+    const buyAmount = await trading.estimateBuyAmount(tokenInfo, bnbForCalc);
+    console.log(`At the current marginal price: ${ethers.formatUnits(buyAmount, 18)} tokens (display only)`);
 
-    const buyCost = await trading.calcBuyCost(tokenInfo, tokenForCalc);
-    console.log(`To buy 1000 tokens, you need: ${ethers.formatEther(buyCost)} BNB`);
+    const buyCost = await trading.estimateBuyCost(tokenInfo, tokenForCalc);
+    console.log(`Current marginal cost estimate: ${ethers.formatEther(buyCost)} BNB (display only)`);
 
-    const sellCost = await trading.calcSellCost(tokenInfo, tokenForCalc);
-    console.log(`Selling 1000 tokens gives: ${ethers.formatEther(sellCost)} BNB`);
+    const sellCost = await trading.estimateSellCost(tokenInfo, tokenForCalc);
+    console.log(`Observed sell estimate: ${ethers.formatEther(sellCost)} BNB (display only)`);
 
     const tradingFee = await trading.calcTradingFee(tokenInfo, bnbForCalc);
     console.log(`Trading fee for 0.1 BNB: ${ethers.formatEther(tradingFee)} BNB\n`);

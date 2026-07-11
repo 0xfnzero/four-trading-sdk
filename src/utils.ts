@@ -1,14 +1,44 @@
 import { ethers, TransactionReceipt, TransactionResponse } from 'ethers';
 import { TokenCreateEvent, TokenPurchaseEvent, TokenSaleEvent } from './types';
+import { FOUR_TRADING_ABI } from './abi';
+import {
+  FOUR_MEME_ADDRESS,
+  TOKEN_CREATE_TOPIC,
+  ADD_LIQUIDITY_SIGNATURE,
+  CREATE_TOKEN_SIGNATURE,
+} from './constants';
 
 /**
  * Utility functions for transaction and event parsing
  */
 
-export const FOUR_MEME_ADDRESS = '0x5c952063c7fc8610FFDB798152D69F0B9550762b';
-export const TOKEN_CREATE_TOPIC = '0x396d5e902b675b032348d3d2e9517ee8f0c4a926603fbc075d3d282ff00cad20';
-export const ADD_LIQUIDITY_SIGNATURE = '0xe3412e3d';
-export const CREATE_TOKEN_SIGNATURE = '0x519ebb10';
+export {
+  FOUR_MEME_ADDRESS,
+  TOKEN_CREATE_TOPIC,
+  ADD_LIQUIDITY_SIGNATURE,
+  CREATE_TOKEN_SIGNATURE,
+} from './constants';
+
+export interface ParsedTransactionInput {
+  name: string;
+  signature: string;
+  selector: string;
+  args: Record<string, unknown>;
+  rawArgs: readonly unknown[];
+}
+
+const FOUR_TRADING_INTERFACE = new ethers.Interface(FOUR_TRADING_ABI);
+
+const TRANSACTION_SELECTOR_MAP: Record<string, { name: string; signature: string }> =
+  FOUR_TRADING_INTERFACE.fragments.reduce((acc, fragment: any) => {
+    if (fragment.type === 'function' && fragment.selector) {
+      acc[fragment.selector.toLowerCase()] = {
+        name: fragment.name,
+        signature: fragment.format('sighash'),
+      };
+    }
+    return acc;
+  }, {} as Record<string, { name: string; signature: string }>);
 
 /**
  * Parse transaction receipt for trading events
@@ -74,7 +104,7 @@ export async function parseTokenCreateEvent(
   contract: ethers.Contract
 ): Promise<TokenCreateEvent | null> {
   for (const log of receipt.logs) {
-    if (log.topics[0].toLowerCase() !== TOKEN_CREATE_TOPIC.toLowerCase()) {
+    if (!log.topics[0] || log.topics[0].toLowerCase() !== TOKEN_CREATE_TOPIC.toLowerCase()) {
       continue;
     }
 
@@ -151,8 +181,25 @@ export function parseTokenAmount(amount: string, decimals: number = 18): bigint 
  */
 export function calculatePriceChange(oldPrice: bigint, newPrice: bigint): number {
   if (oldPrice === 0n) return 0;
-  const change = ((Number(newPrice) - Number(oldPrice)) / Number(oldPrice)) * 100;
-  return Math.round(change * 100) / 100;
+  const numerator = (newPrice - oldPrice) * 10_000n;
+  const rounded = divideRounded(numerator, oldPrice);
+  return Number(rounded) / 100;
+}
+
+function divideRounded(numerator: bigint, denominator: bigint): bigint {
+  const negative = (numerator < 0n) !== (denominator < 0n);
+  const absoluteNumerator = numerator < 0n ? -numerator : numerator;
+  const absoluteDenominator = denominator < 0n ? -denominator : denominator;
+  let quotient = absoluteNumerator / absoluteDenominator;
+  const remainder = absoluteNumerator % absoluteDenominator;
+  const shouldRoundUp = negative
+    ? remainder * 2n > absoluteDenominator
+    : remainder * 2n >= absoluteDenominator;
+
+  if (shouldRoundUp) {
+    quotient += 1n;
+  }
+  return negative ? -quotient : quotient;
 }
 
 /**
@@ -180,16 +227,67 @@ export function isFourMemeTransaction(tx: TransactionResponse): boolean {
  * Get transaction type from signature
  */
 export function getTransactionType(tx: TransactionResponse): string | null {
-  if (!tx.data || tx.data.length < 10) return null;
+  return getTransactionTypeFromData(tx.data);
+}
 
-  const signature = tx.data.slice(0, 10);
+export function getTransactionTypeFromData(data?: string): string | null {
+  if (!data || data.length < 10) return null;
 
-  if (signature === CREATE_TOKEN_SIGNATURE) return 'createToken';
-  if (signature === ADD_LIQUIDITY_SIGNATURE) return 'addLiquidity';
-  if (signature === '0x87f27655') return 'buyTokenAMAP';
-  if (signature === '0xe63aaf36') return 'sellToken';
+  const selector = data.slice(0, 10).toLowerCase();
+  return TRANSACTION_SELECTOR_MAP[selector]?.name || 'unknown';
+}
 
-  return 'unknown';
+export function getTransactionSignatureFromData(data?: string): string | null {
+  if (!data || data.length < 10) return null;
+
+  const selector = data.slice(0, 10).toLowerCase();
+  return TRANSACTION_SELECTOR_MAP[selector]?.signature || null;
+}
+
+export function getTransactionSelectorMap(): Record<string, { name: string; signature: string }> {
+  return { ...TRANSACTION_SELECTOR_MAP };
+}
+
+/**
+ * Decode FOUR Trading calldata using the ABI instead of hand-written offsets.
+ */
+export function decodeFourTradingTransactionData(data: string, value?: bigint): ParsedTransactionInput | null {
+  if (!data || data.length < 10) {
+    return null;
+  }
+
+  const selector = data.slice(0, 10).toLowerCase();
+  if (!TRANSACTION_SELECTOR_MAP[selector]) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = FOUR_TRADING_INTERFACE.parseTransaction({
+      data,
+      value: value ?? 0n,
+    });
+  } catch {
+    return null;
+  }
+
+  if (!parsed) {
+    return null;
+  }
+
+  const args: Record<string, unknown> = {};
+  parsed.fragment.inputs.forEach((input, index) => {
+    const name = input.name || `arg${index}`;
+    args[name] = parsed.args[index];
+  });
+
+  return {
+    name: parsed.name,
+    signature: parsed.signature,
+    selector,
+    args,
+    rawArgs: Array.from(parsed.args),
+  };
 }
 
 /**
@@ -207,9 +305,11 @@ export async function waitForTransaction(
   provider: ethers.Provider,
   txHash: string,
   confirmations: number = 1,
-  timeout: number = 120000
+  timeout: number = 120000,
+  pollIntervalMs: number = 1000
 ): Promise<TransactionReceipt | null> {
   const startTime = Date.now();
+  const interval = Math.max(50, pollIntervalMs);
 
   while (Date.now() - startTime < timeout) {
     const receipt = await provider.getTransactionReceipt(txHash);
@@ -219,7 +319,7 @@ export async function waitForTransaction(
         return receipt;
       }
     }
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, interval));
   }
 
   throw new Error(`Transaction ${txHash} timeout after ${timeout}ms`);

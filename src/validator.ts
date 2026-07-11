@@ -150,6 +150,12 @@ export class Validator {
     }
   }
 
+  static validateDecimals(decimals: number, fieldName: string = 'decimals'): void {
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 77) {
+      throw new ValidationError(`${fieldName} must be an integer between 0 and 77, got: ${decimals}`);
+    }
+  }
+
   /**
    * Validate token addresses are not the same
    */

@@ -42,6 +42,14 @@
 
 ---
 
+## BSC SDK 家族
+
+| 类别 | Node.js / TypeScript | Go |
+| --- | --- | --- |
+| 统一交易 | [bsc-trade-sdk-nodejs](https://github.com/0xfnzero/bsc-trade-sdk-nodejs) | [bsc-trade-sdk-golang](https://github.com/0xfnzero/bsc-trade-sdk-golang) |
+| 交易解析 | [bsc-parser-sdk-nodejs](https://github.com/0xfnzero/bsc-parser-sdk-nodejs) | [bsc-parser-sdk-golang](https://github.com/0xfnzero/bsc-parser-sdk-golang) |
+| 协议 SDK | **[four-trading-sdk](https://github.com/0xfnzero/four-trading-sdk)** | [pancakeswap-sdk](https://github.com/0xfnzero/pancakeswap-sdk) |
+
 ## 📖 中文文档
 
 ### 这个 SDK 提供什么
@@ -67,7 +75,11 @@ FOUR Trading SDK 是面向 BNB Smart Chain 的 TypeScript 工具包，用于集�
 - ⚡ **高性能**：智能缓存实现 60-99% 延迟降低
 - 🗄️ **智能缓存**：LRU + TTL 缓存系统（缓存命中快 99.8%）
 - 🔄 **自动重连**：指数退避 WebSocket 重连机制
+- 🚀 **灵活提交**：支持普通 RPC、通用 JSON-RPC 和私有 bundle 提交器
+- 📡 **低延迟流**：支持 JSON-RPC WebSocket、服务商 JSON 流、BlockRazor 类流和可插拔 gRPC 适配器
+- 🔢 **本地 Nonce 管理**：基于 pending nonce 刷新的并发交易签名保护
 - 📊 **性能监控**：跟踪 P50/P95/P99 延迟和指标
+- 🧩 **Calldata 解码**：基于 ABI 的 FOUR Trading 交易选择器和参数解析
 - 🛡️ **类型安全**：完整的 TypeScript 支持，100% 类型覆盖
 - ✅ **输入验证**：所有参数的全面验证
 - 📝 **结构化日志**：可配置的日志级别和格式
@@ -157,7 +169,8 @@ await trading.buyToken({
   tokenAddress: '0xTokenAddress',
   fundsInBNB: bnbAmount,        // 要花费的 BNB 数量（bigint）
   minAmount: minTokenAmount,     // 最少接收的代币数量（bigint）
-  to: '0xRecipient'              // 可选：接收地址
+  to: '0xRecipient',             // 可选：接收地址
+  origin: 0                      // 可选：当前 origin 版重载
 });
 
 // 方法 2：买入精确数量的代币
@@ -168,7 +181,9 @@ await trading.buyTokenExact(
   '0xTokenAddress',
   exactTokens,      // 精确的代币数量（bigint）
   maxBNB,           // 最多花费的 BNB（bigint）
-  '0xRecipient'     // 可选：接收地址
+  '0xRecipient',    // 可选：接收地址
+  undefined,        // 可选 gas 配置
+  0                 // 可选 origin
 );
 ```
 
@@ -202,6 +217,7 @@ const buyQuote = await trading.quoteBuy('0xTokenAddress', bnbAmount);
 console.log(`代币数量: ${buyQuote.tokenAmount}`);
 console.log(`手续费: ${buyQuote.fee}`);
 console.log(`每个代币价格: ${buyQuote.pricePerToken}`);
+console.log(`是否估算: ${buyQuote.estimated}`);
 
 // 获取卖出报价
 const tokenAmount = ethers.parseUnits('1000', 18);
@@ -220,6 +236,8 @@ const buyWithSlippage = await trading.calculateBuyWithSlippage(
   1             // 1% 滑点（number）
 );
 ```
+
+当前 FOUR implementation 已不再可靠暴露公开的 `calcBuyAmount`、`calcBuyCost` 和 `calcSellCost` 报价 helper。SDK 会基于最新的 `_tokenInfos`、`_tradingFeeRate`/`calcTradingFee` 和已观测曲线状态计算展示报价。买入和卖出报价都会标记 `estimated: true`，不能直接视为保证成交量。`calculateBuyWithSlippage` 与 `calculateSellWithSlippage` 会额外只读模拟对应合约调用；若保护值会回退，方法会拒绝返回。最终成交数量仍应以交易事件为准。
 
 #### 代币信息
 
@@ -249,6 +267,7 @@ const purchaseListener = trading.onTokenPurchase((event) => {
   console.log('代币购买:', event.token);
   console.log('数量:', event.amount);
   console.log('花费:', event.cost);
+  console.log('交易哈希:', event.metadata?.txHash);
 }, '0xTokenAddress'); // 可选：按代币地址过滤
 
 // 订阅出售事件
@@ -279,6 +298,9 @@ const purchaseEvents = await trading.getTokenPurchaseEvents(
 
 // 获取出售事件
 const saleEvents = await trading.getTokenSaleEvents('0xTokenAddress');
+
+// 实时和历史事件都包含可选的日志 metadata
+console.log(createEvents[0]?.metadata?.blockNumber);
 ```
 
 ### 🛠️ 实用函数
@@ -294,6 +316,8 @@ import {
   normalizeAddress,
   parseTradeEvents,
   getTransactionType,
+  getTransactionSignatureFromData,
+  decodeFourTradingTransactionData,
   calculateGasCost
 } from '@fnzero/four-trading-sdk';
 
@@ -317,6 +341,15 @@ const { purchases, sales } = await parseTradeEvents(receipt, contract);
 
 // 获取交易类型
 const txType = getTransactionType(tx); // 'buyTokenAMAP' | 'sellToken' 等
+const signature = getTransactionSignatureFromData(tx.data);
+
+// 解码 FOUR Trading calldata
+const decoded = decodeFourTradingTransactionData(tx.data, tx.value);
+console.log(decoded?.signature);
+console.log(decoded?.args);
+
+// selector map 已包含当前 BSC 交易中观测到的 origin 版买入重载，
+// 例如 buyTokenAMAP(uint256,address,uint256,uint256) -> 0xedf9e251。
 
 // 计算 gas 费用
 const gasCost = calculateGasCost(receipt); // "0.001" (BNB)
@@ -384,6 +417,9 @@ import {
   TokenCreateEvent,
   TokenPurchaseEvent,
   TokenSaleEvent,
+  TokenMetadata,
+  MarketCapInfo,
+  SubmitterConfig,
   // 高级功能
   Logger,
   LogLevel,
@@ -425,6 +461,194 @@ const slowOps = perfMonitor.getSlowOperations(10);
 slowOps.forEach(op => {
   console.log(`${op.operationName}: ${op.duration}ms`);
 });
+```
+
+#### 交易提交基础设施
+
+配置交易确认策略、本地 nonce 管理和一个或多个已签名交易提交器：
+
+```typescript
+const trading = new FourTrading({
+  rpcUrl: 'https://bsc-dataseed.binance.org',
+  wssUrl: 'wss://bsc-rpc.publicnode.com',
+  privateKey: '你的私钥',
+  chainId: 56,
+  confirmations: 1,
+  transactionTimeoutMs: 90_000,
+  confirmationPollIntervalMs: 250,
+  waitForConfirmation: true, // 热路径只要 txHash 时设为 false
+  requireHotPathReady: false,
+  defaultGas: {
+    gasLimit: 350000n,
+    gasPrice: ethers.parseUnits('3', 'gwei')
+  },
+  useLocalNonce: true,
+  nonce: {
+    initialNonce: 123, // 可选：在热路径外预先查询 pending nonce 后注入
+    refreshOnEveryNonce: false,
+    autoSyncIntervalMs: 1000
+  },
+  submitters: [
+    { type: 'normal', name: 'public-rpc' },
+    {
+      type: 'forty-eight',
+      name: 'private-48club',
+      url: process.env.FORTY_EIGHT_URL!,
+      targetBlockOffset: 2n,
+      noMerge: true,
+      positionFirst: true
+    },
+    {
+      type: 'bloxroute',
+      name: 'private-bloxroute',
+      url: process.env.BLOXROUTE_URL!,
+      authToken: process.env.BLOXROUTE_AUTH,
+      targetBlockOffset: 2n,
+      bloxrouteBundlePayloadFormat: 'txs',
+      noMerge: true,
+      bloxrouteMevBuilders: { all: '' },
+      bloxrouteBackrunmeRewardAddress: process.env.BLOXROUTE_REWARD_ADDRESS,
+      frontRunningProtection: true
+    },
+    {
+      type: 'bloxroute-private',
+      name: 'private-bloxroute-tx',
+      url: process.env.BLOXROUTE_URL!,
+      authToken: process.env.BLOXROUTE_AUTH,
+      bloxroutePrivateMevBuilders: ['all'],
+      bloxrouteBackrunmeRewardAddress: process.env.BLOXROUTE_REWARD_ADDRESS,
+      frontRunningProtection: true
+    },
+    {
+      type: 'blockrazor',
+      name: 'private-blockrazor',
+      url: process.env.BLOCKRAZOR_URL!,
+      authToken: process.env.BLOCKRAZOR_AUTH,
+      targetBlockOffset: 2n,
+      noMerge: true
+    }
+  ]
+});
+
+const result = await trading.buyToken({
+  tokenAddress: '0xTokenAddress',
+  fundsInBNB: ethers.parseEther('0.1'),
+  minAmount: 0n,
+  targetBlockNumber: 123456789n,
+  bundleRawTransactions: ['0xSignedRawTransaction'] // 可选：bundle 前置交易
+});
+
+console.log(result.submitter);  // 第一个成功的提交器
+console.log(result.bundleHash); // 私有 bundle 返回值，取决于服务商
+console.log(result.nonce);
+
+// 外部钱包活动后可手动同步本地 nonce
+await trading.refreshNonce();
+
+// 仅在确认私有 bundle 已过期或所有路径均未广播后调用
+await trading.recoverUnbroadcastNonce(result.nonce!);
+```
+
+支持的提交器类型包括 `normal`、`json-rpc`、`forty-eight`、`blockrazor`、`bloxroute` 和 `bloxroute-private`。不同私有端点的要求不同，可通过 `SubmitterConfig` 传入服务商特定的 URL、鉴权头、方法名、区块限制和保护参数。对于 `forty-eight`，`FourTrading` 会用 SDK 私钥自动为 bundle 生成 `48spSign`；直接使用 submitter 时可传 `fortyEightSignerPrivateKey`，或用预计算的 `fortyEightSignature` 覆盖。对于 bloXroute BSC bundle，SDK 会输出当前 snake_case 字段，例如 `max_block_number`、`min_timestamp`、`max_timestamp`、`reverting_tx_hashes`、`no_merge`、`mev_builders` 和 `backrunme_reward_address`；`bloxroute-private` 使用 `bsc_private_tx`，并把服务商返回值视为交易哈希而不是 bundleHash。
+
+超低延迟路径可以设置 `waitForConfirmation: false`，在热路径外查询并注入 `nonce.initialNonce`，显式传入 gas 与 `chainId`，并在每笔交易上传 `targetBlockNumber`。`defaultGas` 中的 nonce 会被拒绝，因为它会被每笔交易重复使用。启用本地 nonce 管理时，单笔 `gas.nonce` 也会被拒绝；若 nonce 完全由外部系统管理，应设置 `useLocalNonce: false`。开启 `requireHotPathReady: true` 后，如果交易还需要通过 `populateTransaction` 补 nonce、gas 或 chain 数据，SDK 会直接报错。私有 relay 接受请求不等于交易已上链；只有确认所有路径均未广播或目标 bundle 已不可能落地后，才能调用 `recoverUnbroadcastNonce`。`targetBlockOffset` 仍可用于普通路径，但它会读取当前块，不适合下单热路径。
+
+#### 低延迟流基础设施
+
+如果要接入类似 ShredStream/Geyser 的第三方流、BSC pending transaction 流，或服务商专有日志流，可以使用 `TransactionStreamManager`。SDK 只负责连接、重连、心跳、缓冲排序和通用事件归一化，不内置交易策略：
+
+```typescript
+import {
+  TransactionStreamManager,
+  TOKEN_CREATE_TOPIC,
+  createBlockRazorGrpcStreamSource,
+  createShredStreamSource
+} from '@fnzero/four-trading-sdk';
+
+const streams = new TransactionStreamManager({
+  orderMode: 'microbatch',
+  microBatchMs: 2,
+  sources: [
+    {
+      type: 'websocket-json-rpc',
+      name: 'pending-rpc',
+      url: process.env.BSC_WSS_URL!,
+      jsonRpcSubscription: 'newPendingTransactions',
+      includePendingTransactionBody: true
+    },
+    {
+      type: 'blockrazor',
+      name: 'blockrazor-logs',
+      url: process.env.BLOCKRAZOR_STREAM_URL!,
+      authToken: process.env.BLOCKRAZOR_AUTH!,
+      addresses: ['0xFourTradingContract'],
+      topics: [[TOKEN_CREATE_TOPIC]]
+    },
+    createBlockRazorGrpcStreamSource({
+      streamFactory: async () => providerSpecificClient.subscribe(),
+      nodeValidation: false
+    }),
+    createShredStreamSource({
+      adapterFactory: ({ emitEvent, signal }) => {
+        thirdPartyFeed.on('transaction', (tx) => emitEvent({
+          eventType: 'transaction',
+          raw: tx,
+          txHash: tx.hash,
+          slot: tx.slot,
+          txIndex: tx.index
+        }));
+        signal.addEventListener('abort', () => thirdPartyFeed.close());
+        return { close: () => thirdPartyFeed.close() };
+      }
+    })
+  ]
+});
+
+streams.onEvent((event) => {
+  if (event.eventType === 'transaction') {
+    console.log(event.txHash, event.signedTransaction);
+  }
+  if (event.eventType === 'log') {
+    console.log(event.blockNumber, event.address, event.topics);
+  }
+});
+
+await streams.start();
+```
+
+支持的流源类型包括 `websocket-json-rpc`、`json-websocket`、`http-json-stream`、`blockrazor`、`grpc` 和 `adapter`。`grpc` 源刻意保持服务商中立：调用方把服务商 proto 生成的 client/stream 通过 `streamFactory` 传入，再按需用 `grpcSubscribeRequest` 或 `grpcPingRequest` 处理服务商特定的订阅和 ping/pong。类似 ShredStream/Geyser 的第三方高速流，或供应商 SDK 回调，可以用 `createShredStreamSource` 或 `createAdapterStreamSource` 把原始消息或已归一化事件送入同一个 stream manager。
+
+排序模式包括 `none`、`ordered`、`streaming` 和 `microbatch`，用于处理按区块/slot 和交易序号可能乱序到达的低延迟流。
+
+#### 授权守卫
+
+卖出前跳过不必要的授权交易：
+
+```typescript
+const amount = ethers.parseUnits('1000', 18);
+const approvalTx = await trading.ensureTokenApproval('0xTokenAddress', amount);
+
+if (approvalTx) {
+  console.log(`已授权: ${approvalTx.txHash}`);
+}
+
+await trading.sellToken({
+  tokenAddress: '0xTokenAddress',
+  amount,
+  minFunds: 0n
+});
+```
+
+#### 代币元数据和市值
+
+```typescript
+const metadata = await trading.getTokenMetadata('0xTokenAddress');
+console.log(metadata.name, metadata.symbol, metadata.decimals);
+
+const marketCap = await trading.getMarketCap('0xTokenAddress');
+console.log(ethers.formatEther(marketCap.fdvWei));
+console.log(ethers.formatUnits(marketCap.circulatingSupply, marketCap.decimals));
+console.log(ethers.formatEther(marketCap.circulatingMarketCapWei));
 ```
 
 #### 自定义日志

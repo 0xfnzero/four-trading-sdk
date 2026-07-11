@@ -4,11 +4,24 @@
   "description": "TypeScript SDK for trading tokens on the FOUR launch platform (BSC)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "require": "./dist/*.js",
+      "default": "./dist/*.js"
+    }
+  },
   "files": [
     "dist",
     "README.md",
     "README.zh-CN.md"
   ],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
@@ -33,14 +46,16 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "ethers": "^6.13.0"
+    "ethers": "^6.17.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
-    "@types/node": "^20.14.0",
-    "dotenv": "^17.2.3",
+    "@types/node": "^22.20.1",
+    "@types/ws": "^8.18.1",
+    "dotenv": "^17.4.2",
     "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
+    "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.0"
   },
