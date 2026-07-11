@@ -43,7 +43,7 @@
     "ethereum",
     "sdk"
   ],
-  "author": "",
+  "author": "fnzero <contact@fnzero.dev>",
   "license": "MIT",
   "dependencies": {
     "ethers": "^6.17.0",
@@ -64,6 +64,10 @@
   },
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "git+https://github.com/0xfnzero/four-trading-sdk.git"
+  },
+  "homepage": "https://github.com/0xfnzero/four-trading-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/0xfnzero/four-trading-sdk/issues"
   }
 }
