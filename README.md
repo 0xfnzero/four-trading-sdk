@@ -33,8 +33,8 @@
 </p>
 
 <p align="center">
-    <a href="./README.md">English</a> |
-    <a href="./README.zh-CN.md">中文</a> |
+    <a href="https://github.com/0xfnzero/four-trading-sdk/blob/main/README.zh-CN.md">中文</a> |
+    <a href="https://github.com/0xfnzero/four-trading-sdk/blob/main/README.md">English</a> |
     <a href="https://fnzero.dev/">Website</a> |
     <a href="https://t.me/fnzero_group">Telegram</a> |
     <a href="https://discord.gg/vuazbGkqQE">Discord</a>
