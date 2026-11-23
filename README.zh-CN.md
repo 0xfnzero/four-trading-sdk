@@ -239,6 +239,10 @@ const buyWithSlippage = await trading.calculateBuyWithSlippage(
 
 当前 FOUR implementation 已不再可靠暴露公开的 `calcBuyAmount`、`calcBuyCost` 和 `calcSellCost` 报价 helper。SDK 会基于最新的 `_tokenInfos`、`_tradingFeeRate`/`calcTradingFee` 和已观测曲线状态计算展示报价。买入和卖出报价都会标记 `estimated: true`，不能直接视为保证成交量。`calculateBuyWithSlippage` 与 `calculateSellWithSlippage` 会额外只读模拟对应合约调用；若保护值会回退，方法会拒绝返回。最终成交数量仍应以交易事件为准。
 
+SDK 使用完整 ABI 函数签名选择 `sellToken` 重载，包括指定 `origin` 或推荐手续费的情况，从而避免 ethers v6 的 `ambiguous function description` 错误（issue #4）。旧版本遇到该错误时请升级 SDK。
+
+SDK 没有 `calcSellAmount` 方法。已知卖出代币数量时，用 `quoteSell(tokenAddress, tokenAmount)` 估算 BNB 收益，或用 `calculateSellWithSlippage(tokenAddress, tokenAmount, slippagePercent)` 获取经模拟验证的 `minBnbAmount`，用于 `sellToken.minFunds`。代币数量使用最小单位（`ethers.parseUnits`）；滑点方法返回的 BNB 字符串需用 `ethers.parseEther` 转成 `minFunds`。`calcBuyAmount` 和买入报价均不能计算达到目标卖出收益所需的代币数量。
+
 #### 代币信息
 
 ```typescript

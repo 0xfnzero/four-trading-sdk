@@ -673,6 +673,7 @@ export class FourTrading {
     const txOptions = this.buildTxOptions(params.gas);
     const origin = BigInt(params.origin ?? 0);
 
+    // Resolve overloaded ABI methods by full signature (ethers v6, issue #4).
     let request: TransactionRequest;
     if (params.feeRate !== undefined && params.feeRecipient) {
       request = await this.contract['sellToken(uint256,address,uint256,uint256,uint256,address)'].populateTransaction(

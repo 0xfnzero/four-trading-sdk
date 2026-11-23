@@ -237,6 +237,10 @@ const buyWithSlippage = await trading.calculateBuyWithSlippage(
 
 The current FOUR implementation no longer exposes reliable public `calcBuyAmount`, `calcBuyCost`, and `calcSellCost` helpers for SDK quoting. The SDK therefore computes display quotes locally from a fresh `_tokenInfos` snapshot, `_tradingFeeRate`/`calcTradingFee`, and observed curve state. Buy and sell quotes are marked `estimated: true` and must not be used directly as guaranteed outputs. `calculateBuyWithSlippage` and `calculateSellWithSlippage` additionally simulate the matching contract call and refuse to return a protection value when it would revert; final amounts should still be validated from emitted trade events.
 
+The SDK selects `sellToken` overloads by their complete ABI signatures, including when `origin` or referral fees are supplied. This avoids ethers v6's `ambiguous function description` error (issue #4). If you encounter it in an older release, update the SDK.
+
+There is no `calcSellAmount` method. For a known token amount, use `quoteSell(tokenAddress, tokenAmount)` to estimate BNB proceeds, or `calculateSellWithSlippage(tokenAddress, tokenAmount, slippagePercent)` to obtain a simulated `minBnbAmount` for `sellToken.minFunds`. Token amounts use base units (`ethers.parseUnits`); BNB strings returned by the slippage helper use `ethers.parseEther` when passed as `minFunds`. Neither `calcBuyAmount` nor a buy quote computes the tokens needed for a target sell payout.
+
 #### Token Information
 
 ```typescript
